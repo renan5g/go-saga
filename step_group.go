@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 )
@@ -95,26 +96,29 @@ func (sg *StepGroup) GetExecutionMode() ExecutionMode {
 
 // executeGroup é a implementação da execução do grupo
 func (sg *StepGroup) executeGroup(ctx context.Context) error {
-	sg.mu.Lock()
-	defer sg.mu.Unlock()
-
+	sg.mu.RLock()
 	if len(sg.steps) == 0 {
+		sg.mu.RUnlock()
 		sg.logf("StepGroup %s has no steps to execute", sg.ID)
 		return nil
 	}
 
-	sg.logf("Executing StepGroup %s with %d steps in %s mode", sg.ID, len(sg.steps), sg.execMode)
+	execMode := sg.execMode
+	steps := slices.Clone(sg.steps) // Create a copy of steps
+	sg.mu.RUnlock()
+
+	sg.logf("Executing StepGroup %s with %d steps in %s mode", sg.ID, len(steps), execMode)
 
 	// Executa os passos de acordo com o modo configurado
-	if sg.execMode == Parallel {
-		return sg.executeParallel(ctx)
+	if execMode == Parallel {
+		return sg.executeParallel(ctx, steps)
 	}
-	return sg.executeSequential(ctx)
+	return sg.executeSequential(ctx, steps)
 }
 
 // executeSequential executa os passos em sequência
-func (sg *StepGroup) executeSequential(ctx context.Context) error {
-	for i, step := range sg.steps {
+func (sg *StepGroup) executeSequential(ctx context.Context, steps []IStep) error {
+	for i, step := range steps {
 		// Verifica cancelamento do contexto
 		if err := ctx.Err(); err != nil {
 			sg.logf("Context canceled during step group execution: %v", err)
@@ -138,9 +142,9 @@ func (sg *StepGroup) executeSequential(ctx context.Context) error {
 }
 
 // executeParallel executa os passos em paralelo
-func (sg *StepGroup) executeParallel(ctx context.Context) error {
+func (sg *StepGroup) executeParallel(ctx context.Context, steps []IStep) error {
 	var wg sync.WaitGroup
-	errCh := make(chan error, len(sg.steps))
+	errCh := make(chan error, len(steps))
 
 	// Inicia cada passo em uma goroutine separada
 	for _, step := range sg.steps {
