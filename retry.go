@@ -1,64 +1,61 @@
 package saga
 
 import (
-	"math/rand"
+	"math"
 	"time"
 )
 
-// RetryPolicy define a política de tentativas para execução de um passo
+// RetryPolicy define a política de novas tentativas para passos
 type RetryPolicy struct {
 	MaxRetries  int                             // Número máximo de tentativas
-	BackoffFunc func(attempt int) time.Duration // Função para calcular o tempo de espera entre tentativas
+	BackoffFunc func(attempt int) time.Duration // Função para calcular tempo de espera
 }
 
-// NewRetryPolicy cria uma nova política de retry com backoff padrão
-func NewRetryPolicy(maxRetries int) *RetryPolicy {
-	return &RetryPolicy{
-		MaxRetries:  maxRetries,
-		BackoffFunc: DefaultBackoff,
+// DefaultBackoff retorna uma função de backoff exponencial (2^tentativa * base)
+func DefaultBackoff(baseDelay time.Duration) func(attempt int) time.Duration {
+	return func(attempt int) time.Duration {
+		// 2^tentativa * baseDelay com limite para evitar overflow
+		multiplier := math.Min(math.Pow(2, float64(attempt)), 10)
+		return time.Duration(float64(baseDelay) * multiplier)
 	}
 }
 
-// WithBackoffFunc personaliza a função de backoff
-func (r *RetryPolicy) WithBackoffFunc(fn func(attempt int) time.Duration) *RetryPolicy {
-	r.BackoffFunc = fn
-	return r
-}
-
-// DefaultBackoff retorna um tempo de espera exponencial com jitter
-func DefaultBackoff(attempt int) time.Duration {
-	if attempt <= 0 {
-		return 0
-	}
-	// Exponential backoff com jitter (100ms * 2^attempt ± 20%)
-	baseDelay := time.Duration(100*(1<<attempt)) * time.Millisecond
-	jitter := time.Duration(float64(baseDelay) * 0.2 * (0.5 - float64(time.Now().Nanosecond())/1e9))
-	return baseDelay + jitter
-}
-
-// LinearBackoff retorna um tempo de espera linear
+// LinearBackoff retorna uma função de backoff linear (tentativa * base)
 func LinearBackoff(baseDelay time.Duration) func(attempt int) time.Duration {
 	return func(attempt int) time.Duration {
 		return baseDelay * time.Duration(attempt)
 	}
 }
 
-// FixedBackoff retorna sempre o mesmo tempo de espera
+// FixedBackoff retorna uma função de backoff com delay fixo
 func FixedBackoff(delay time.Duration) func(attempt int) time.Duration {
-	return func(_ int) time.Duration {
+	return func(attempt int) time.Duration {
 		return delay
 	}
 }
 
-func ExponentialBackoff(baseDelay time.Duration) func(attempt int) time.Duration {
-	return func(attempt int) time.Duration {
-		return baseDelay * time.Duration(1<<attempt)
+// NewRetryPolicy cria uma política de retry com valores padrão
+func NewRetryPolicy(maxRetries int, baseDelay time.Duration) *RetryPolicy {
+	return &RetryPolicy{
+		MaxRetries:  maxRetries,
+		BackoffFunc: DefaultBackoff(baseDelay),
 	}
 }
 
-func JitterBackoff(baseDelay time.Duration) func(attempt int) time.Duration {
-	return func(attempt int) time.Duration {
-		jitter := time.Duration(rand.Int63n(int64(baseDelay)))
-		return baseDelay + jitter
-	}
+// WithLinearBackoff configura backoff linear para esta política
+func (r *RetryPolicy) WithLinearBackoff(baseDelay time.Duration) *RetryPolicy {
+	r.BackoffFunc = LinearBackoff(baseDelay)
+	return r
+}
+
+// WithFixedBackoff configura backoff fixo para esta política
+func (r *RetryPolicy) WithFixedBackoff(delay time.Duration) *RetryPolicy {
+	r.BackoffFunc = FixedBackoff(delay)
+	return r
+}
+
+// WithCustomBackoff configura uma função de backoff personalizada
+func (r *RetryPolicy) WithCustomBackoff(backoffFunc func(attempt int) time.Duration) *RetryPolicy {
+	r.BackoffFunc = backoffFunc
+	return r
 }

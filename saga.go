@@ -10,7 +10,7 @@ import (
 
 // Saga implementa o padrão saga para transações distribuídas
 type Saga struct {
-	steps       []Step
+	steps       []IStep
 	ctx         context.Context
 	mu          sync.RWMutex
 	config      SagaConfig
@@ -22,7 +22,7 @@ type Saga struct {
 func NewSaga(ctx context.Context, options ...SagaOption) *Saga {
 	saga := &Saga{
 		ctx:    ctx,
-		steps:  make([]Step, 0),
+		steps:  make([]IStep, 0),
 		config: DefaultSagaConfig(),
 		result: NewExecutionResult(),
 	}
@@ -33,35 +33,12 @@ func NewSaga(ctx context.Context, options ...SagaOption) *Saga {
 }
 
 // AddStep adiciona um novo passo à saga
-func (s *Saga) AddStep(step Step) *Saga {
+func (s *Saga) AddStep(step IStep) ISaga {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Gerar ID automático se não fornecido
-	if step.ID == "" {
-		step.ID = StepID(fmt.Sprintf("step-%d", len(s.steps)))
-	}
-
-	// Configurar valores padrão se necessário
-	if step.Status == "" {
-		step.Status = StatusPending
-	}
-
-	if step.CreatedAt.IsZero() {
-		step.CreatedAt = time.Now()
-	}
-
-	// Usar política de retry padrão se disponível e não especificada no step
-	if step.RetryPolicy == nil && s.config.DefaultRetryPolicy != nil {
-		step.RetryPolicy = s.config.DefaultRetryPolicy
-	}
-
-	if step.Metadata == nil {
-		step.Metadata = make(map[string]any)
-	}
-
 	s.steps = append(s.steps, step)
-	s.logf("Added step: %s", step.ID)
+	s.logf("Added step: %s", step.GetID())
 	return s
 }
 
@@ -70,32 +47,32 @@ func (s *Saga) GetStepStatus(id StepID) (StepStatus, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, step := range s.steps {
-		if step.ID == id {
-			return step.Status, nil
+		if step.GetID() == id {
+			return step.GetStatus(), nil
 		}
 	}
 	return "", fmt.Errorf("%w: %s", ErrStepNotFound, id)
 }
 
 // GetSteps retorna uma cópia dos passos atuais
-func (s *Saga) GetSteps() []Step {
+func (s *Saga) GetSteps() []IStep {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	stepsCopy := make([]Step, len(s.steps))
+	stepsCopy := make([]IStep, len(s.steps))
 	copy(stepsCopy, s.steps)
 	return stepsCopy
 }
 
 // GetStepByID retorna um passo específico pelo ID
-func (s *Saga) GetStepByID(id StepID) (Step, error) {
+func (s *Saga) GetStepByID(id StepID) (IStep, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, step := range s.steps {
-		if step.ID == id {
+		if step.GetID() == id {
 			return step, nil
 		}
 	}
-	return Step{}, fmt.Errorf("%w: %s", ErrStepNotFound, id)
+	return nil, fmt.Errorf("%w: %s", ErrStepNotFound, id)
 }
 
 // GetResult retorna o resultado da execução da saga
@@ -139,9 +116,7 @@ func (s *Saga) Execute() error {
 	s.logf("Starting saga execution with %d steps", len(s.steps))
 
 	// Executar cada passo
-	for i := range s.steps {
-		step := &s.steps[i]
-
+	for i, step := range s.steps {
 		// Verificar cancelamento do contexto
 		if err := s.ctx.Err(); err != nil {
 			s.logf("Context canceled during saga execution: %v", err)
@@ -150,18 +125,18 @@ func (s *Saga) Execute() error {
 
 		// Executar o passo com retry se configurado
 		if err := s.executeStepWithRetry(step); err != nil {
-			step.Status = StatusFailed
-			s.logf("Step %s failed: %v", step.ID, err)
+			step.SetStatus(StatusFailed)
+			s.logf("Step %s failed: %v", step.GetID(), err)
 			return s.handleExecutionFailure(step, i-1, err, startTime)
 		}
 
 		// Sucesso na execução do passo
-		step.Status = StatusExecuted
-		s.result.ExecutedSteps = append(s.result.ExecutedSteps, step.ID)
-		s.logf("Step %s executed successfully", step.ID)
+		step.SetStatus(StatusExecuted)
+		s.result.ExecutedSteps = append(s.result.ExecutedSteps, step.GetID())
+		s.logf("Step %s executed successfully", step.GetID())
 
 		if s.config.OnStepSuccess != nil {
-			s.config.OnStepSuccess(step.ID)
+			s.config.OnStepSuccess(step.GetID())
 		}
 	}
 
@@ -178,23 +153,26 @@ func (s *Saga) Execute() error {
 }
 
 // executeStepWithRetry executa um passo com tentativas conforme política
-func (s *Saga) executeStepWithRetry(step *Step) error {
+func (s *Saga) executeStepWithRetry(step IStep) error {
 	var lastErr error
+	retryPolicy := step.GetRetryPolicy()
 
 	// Se não há política de retry, executa apenas uma vez
-	if step.RetryPolicy == nil {
+	if retryPolicy == nil {
 		return step.Execute(s.ctx)
 	}
 
-	for attempt := 0; attempt <= step.RetryPolicy.MaxRetries; attempt++ {
-		step.retryCount = attempt
+	for attempt := 0; attempt <= retryPolicy.MaxRetries; attempt++ {
+		if attempt > 0 {
+			step.IncrementRetryCount()
+		}
 
 		// Se não é a primeira tentativa, aguarda conforme backoff
 		if attempt > 0 {
-			step.Status = StatusRetrying
-			s.logf("Retrying step %s (attempt %d/%d)", step.ID, attempt, step.RetryPolicy.MaxRetries)
+			step.SetStatus(StatusRetrying)
+			s.logf("Retrying step %s (attempt %d/%d)", step.GetID(), attempt, retryPolicy.MaxRetries)
 
-			waitTime := step.RetryPolicy.BackoffFunc(attempt)
+			waitTime := retryPolicy.BackoffFunc(attempt)
 			select {
 			case <-time.After(waitTime):
 				// Continua após espera
@@ -205,7 +183,7 @@ func (s *Saga) executeStepWithRetry(step *Step) error {
 
 		if err := step.Execute(s.ctx); err != nil {
 			lastErr = err
-			s.logf("Step %s execution failed: %v", step.ID, err)
+			s.logf("Step %s execution failed: %v", step.GetID(), err)
 			continue // Tenta novamente se ainda há tentativas restantes
 		}
 
@@ -213,12 +191,12 @@ func (s *Saga) executeStepWithRetry(step *Step) error {
 	}
 
 	return fmt.Errorf("step %s failed after %d attempts: %w",
-		step.ID, step.retryCount+1, lastErr)
+		step.GetID(), step.GetRetryCount()+1, lastErr)
 }
 
 // handleExecutionFailure processa uma falha de execução e inicia compensação
 func (s *Saga) handleExecutionFailure(
-	failedStep *Step,
+	failedStep IStep,
 	lastSuccessIndex int,
 	originalErr error,
 	startTime time.Time,
@@ -226,13 +204,13 @@ func (s *Saga) handleExecutionFailure(
 
 	// Registra detalhes da falha no resultado
 	s.result.Success = false
-	s.result.FailedStepID = failedStep.ID
+	s.result.FailedStepID = failedStep.GetID()
 	s.result.OriginalError = originalErr
 	s.result.Duration = time.Since(startTime)
 
 	// Executa callback de falha se configurado
 	if s.config.OnFailure != nil {
-		s.config.OnFailure(failedStep.ID, originalErr)
+		s.config.OnFailure(failedStep.GetID(), originalErr)
 	}
 
 	// Inicia processo de compensação
@@ -260,25 +238,25 @@ func (s *Saga) compensate(lastExecutedIndex int, originalError error) error {
 
 	// Compensa passos em ordem reversa
 	for i := lastExecutedIndex; i >= 0; i-- {
-		step := &s.steps[i]
-		if step.Status == StatusExecuted {
-			s.logf("Compensating step %s", step.ID)
+		step := s.steps[i]
+		if step.GetStatus() == StatusExecuted {
+			s.logf("Compensating step %s", step.GetID())
 
 			// Executa compensação
 			if err := step.Compensate(s.ctx); err != nil {
 				compensationErrors = append(
 					compensationErrors,
-					fmt.Errorf("compensation failed for step %s: %w", step.ID, err),
+					fmt.Errorf("compensation failed for step %s: %w", step.GetID(), err),
 				)
-				step.Status = StatusFailed
-				s.logf("Compensation failed for step %s: %v", step.ID, err)
+				step.SetStatus(StatusFailed)
+				s.logf("Compensation failed for step %s: %v", step.GetID(), err)
 			} else {
-				step.Status = StatusCompensated
-				s.result.CompensatedSteps = append(s.result.CompensatedSteps, step.ID)
-				s.logf("Step %s compensated successfully", step.ID)
+				step.SetStatus(StatusCompensated)
+				s.result.CompensatedSteps = append(s.result.CompensatedSteps, step.GetID())
+				s.logf("Step %s compensated successfully", step.GetID())
 
 				if s.config.OnStepCompensated != nil {
-					s.config.OnStepCompensated(step.ID)
+					s.config.OnStepCompensated(step.GetID())
 				}
 			}
 		}
