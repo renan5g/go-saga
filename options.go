@@ -19,7 +19,7 @@ type Logger interface {
 type SagaOption func(*Saga)
 
 func DefaultSagaConfig() SagaConfig {
-	return SagaConfig{Logger: NewStdLogger("[SAGA] ")}
+	return SagaConfig{Logger: NewNoOpLogger()}
 }
 
 // WithOnFailureHook configura um handler para falhas
