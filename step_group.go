@@ -102,11 +102,9 @@ func (sg *StepGroup) executeGroup(ctx context.Context) error {
 		sg.logf("StepGroup %s has no steps to execute", sg.ID)
 		return nil
 	}
-
 	execMode := sg.execMode
 	steps := slices.Clone(sg.steps) // Create a copy of steps
 	sg.mu.RUnlock()
-
 	sg.logf("Executing StepGroup %s with %d steps in %s mode", sg.ID, len(steps), execMode)
 
 	// Executa os passos de acordo com o modo configurado
