@@ -46,18 +46,19 @@ func main() {
 
 	// Define a step
 	step1 := saga.
-    NewStep("step1",
-        func(ctx context.Context) error {
-          fmt.Println("Executing step 1")
-          return nil
-        },
-        func(ctx context.Context) error {
-          fmt.Println("Compensating step 1")
-          return nil
-        },
-      ).
-      WithDescription("First transaction step").
-		  WithRetryPolicy(saga.NewRetryPolicy(3, time.Second))
+    NewStep(
+      "step1",
+      func(ctx context.Context) error {
+        fmt.Println("Executing step 1")
+        return nil
+      },
+      func(ctx context.Context) error {
+        fmt.Println("Compensating step 1")
+        return nil
+      },
+    ).
+    WithDescription("First transaction step").
+    WithRetryPolicy(saga.NewRetryPolicy(3, time.Second))
 
 	// Add step to saga
 	s.AddStep(step1)
