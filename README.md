@@ -42,22 +42,22 @@ import (
 
 func main() {
 	ctx := context.Background()
-	s := saga.NewSaga(ctx, saga.WithLogger(saga.NewStdLogger("saga: ")))
+	s := saga.NewSaga(ctx, saga.WithLogger(saga.NewStdLogger("[Saga]: ")))
 
 	// Define a step
 	step1 := saga.
     NewStep("step1",
-      func(ctx context.Context) error {
-        fmt.Println("Executing step 1")
-        return nil
-      },
-      func(ctx context.Context) error {
-        fmt.Println("Compensating step 1")
-        return nil
-      },
-    ).
-    WithDescription("First transaction step").
-		WithRetryPolicy(saga.NewRetryPolicy(3, time.Second))
+        func(ctx context.Context) error {
+          fmt.Println("Executing step 1")
+          return nil
+        },
+        func(ctx context.Context) error {
+          fmt.Println("Compensating step 1")
+          return nil
+        },
+      ).
+      WithDescription("First transaction step").
+		  WithRetryPolicy(saga.NewRetryPolicy(3, time.Second))
 
 	// Add step to saga
 	s.AddStep(step1)
@@ -78,10 +78,9 @@ Step groups allow executing multiple steps sequentially or in parallel within a 
 
 ```go
 // Create a step group
-group := saga.NewStepGroup("group1", saga.WithStepGroupLogger(saga.NewStdLogger("group: ")))
+group := saga.NewStepGroup("group1").Parallel()
 group.AddStep(saga.NewStep("step1", saga.NoOp, saga.NoOp))
 group.AddStep(saga.NewStep("step2", saga.NoOp, saga.NoOp))
-group.SetExecutionMode(saga.Parallel) // Execute steps in parallel
 
 // Add group to saga
 s.AddStep(group)
@@ -128,19 +127,6 @@ step := saga.NewStep("step1",
 s.AddStep(step)
 ```
 
-### Logging to a File
-
-Configure a file-based logger for detailed logging.
-
-```go
-logger, err := saga.NewFileLogger("saga.log", "saga: ")
-if err != nil {
-	fmt.Printf("Failed to create logger: %v\n", err)
-	return
-}
-s := saga.NewSaga(ctx, saga.WithLogger(logger))
-```
-
 ## Configuration Options
 
 ### Saga Options
@@ -154,7 +140,8 @@ s := saga.NewSaga(ctx, saga.WithLogger(logger))
 
 ### Step Group Options
 
-- `WithStepGroupLogger(logger Logger)`: Sets a logger for the step group.
+- `SetLogger(logger Logger)`: Sets a logger for the step group.
+- `SetErrorLogger(logger Logger)`: Sets a error logger for the step group.
 - `SetExecutionMode(mode ExecutionMode)`: Sets sequential or parallel execution (`Sequential` or `Parallel`).
 
 ### Retry Policy Options
