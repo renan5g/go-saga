@@ -4,18 +4,17 @@ import (
 	"time"
 )
 
-// ExecutionResult contém o resultado da execução de uma saga
+// ExecutionResult represents the result of a saga execution
 type ExecutionResult struct {
-	Success           bool          // Indicador de sucesso
-	ExecutedSteps     []StepID      // Passos executados com sucesso
-	FailedStepID      StepID        // ID do passo que falhou (se houver)
-	OriginalError     error         // Erro original que causou a falha
-	CompensationError error         // Erro durante compensação (se houver)
-	CompensatedSteps  []StepID      // Passos compensados com sucesso
-	Duration          time.Duration // Duração total da execução
+	Success           bool          // Saga execution success status
+	ExecutedSteps     []StepID      // Executed steps IDs
+	FailedStepID      StepID        // Failed step ID (if any)
+	OriginalError     error         // Original error that caused the saga to fail
+	CompensationError error         // Compensation error (if any)
+	CompensatedSteps  []StepID      // Steps compensated with success (if any)
+	Duration          time.Duration // Duration total of the saga execution
 }
 
-// NewExecutionResult cria um novo resultado de execução
 func NewExecutionResult() *ExecutionResult {
 	return &ExecutionResult{
 		ExecutedSteps:    make([]StepID, 0),
@@ -23,33 +22,25 @@ func NewExecutionResult() *ExecutionResult {
 	}
 }
 
-// IsCompensated verifica se todos os passos executados foram compensados
+// IsCompensated returns true if the saga execution was compensated successfully
 func (r *ExecutionResult) IsCompensated() bool {
 	if r.Success {
 		return false
 	}
-
-	// Se não há passos executados, não há o que compensar
 	if len(r.ExecutedSteps) == 0 {
 		return true
 	}
-
-	// Verifica se todos os passos executados foram compensados
 	executedMap := make(map[StepID]bool)
 	for _, id := range r.ExecutedSteps {
 		executedMap[id] = true
 	}
-
-	// Remove passos compensados do mapa
 	for _, id := range r.CompensatedSteps {
 		delete(executedMap, id)
 	}
-
-	// Se o mapa estiver vazio, todos foram compensados
 	return len(executedMap) == 0
 }
 
-// HasErrors verifica se ocorreram erros na execução ou compensação
+// HasErrors returns true if the saga execution resulted in errors
 func (r *ExecutionResult) HasErrors() bool {
 	return r.OriginalError != nil || r.CompensationError != nil
 }
